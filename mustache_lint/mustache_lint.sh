@@ -2,7 +2,9 @@
 # $gitcmd: Path to the git CLI executable
 # $gitdir: Directory containing git repo
 # $phpcmd: Path to php CLI exectuable
-# $validator: (optional) url for validator - defaults to https://html5.validator.nu
+# $validator: (optional) validator URL or path to the vnu.jar. When unset, the
+# NPM-installed vnu.jar is used if present (requires Java 17+); otherwise the
+# script fails with guidance instead of silently using the public validator.
 #
 # Based on GIT_PREVIOUS_COMMIT and GIT_COMMIT will list all changed php
 # files and run lint on them.
@@ -70,29 +72,36 @@ find_validator_java() {
     return 1
 }
 
+# Determine the validator to use.
+# Precedence:
+#   1. An explicitly configured $validator (URL or jar path) is always respected.
+#   2. Otherwise, if the NPM-installed vnu.jar is present, use it (requires a
+#      Java 17+ runtime, resolved by find_validator_java).
+#   3. Otherwise, fail with guidance instead of silently using the public service.
 validator_set=${validator:-}
-validator=${validator:-"https://html5.validator.nu"}
-if [ -f "$mydir/../node_modules/vnu-jar/build/dist/vnu.jar" ]
-then
-    # Note: not called via command substitution - the function sets globals
-    # (VALIDATOR_JAVA_CMD, validator_java_version) that we need afterwards,
-    # and a subshell would lose them.
-    if find_validator_java
+if [ -z "$validator_set" ]; then
+    if [ -f "$mydir/../node_modules/vnu-jar/build/dist/vnu.jar" ]
     then
-        echo "NPM installed validator found."
-        validator="$( cd $mydir/../node_modules/ && pwd)/vnu-jar/build/dist/vnu.jar"
-        # Pass the runtime along, so mustache_lint.php does not re-resolve it
-        # (and does not mistake the auto-installed JRE for a missing java).
-        export JAVACMD="$VALIDATOR_JAVA_CMD"
-    elif [ -n "$validator_set" ]
-    then
-        # Explicitly configured validator (no java needed): respect it.
-        echo "NPM installed validator available, but java not found in path. Using the configured validator: $validator"
-    elif [ -n "$validator_java_version" ]
-    then
-        validator_java_error "java version too low: $validator_java_version (Java 17 or above is required)."
+        # Note: not called via command substitution - the function sets globals
+        # (VALIDATOR_JAVA_CMD, validator_java_version) that we need afterwards,
+        # and a subshell would lose them.
+        if find_validator_java
+        then
+            echo "NPM installed validator found."
+            validator="$( cd $mydir/../node_modules/ && pwd)/vnu-jar/build/dist/vnu.jar"
+            # Pass the runtime along, so mustache_lint.php does not re-resolve it
+            # (and does not mistake the auto-installed JRE for a missing java).
+            export MUSTACHE_LINT_JAVACMD="$VALIDATOR_JAVA_CMD"
+        elif [ -n "$validator_java_version" ]
+        then
+            validator_java_error "java version too low: $validator_java_version (Java 17 or above is required)."
+        else
+            validator_java_error "java not found in path."
+        fi
     else
-        validator_java_error "java not found in path."
+        echo "No NPM-installed validator found (node_modules/vnu-jar is missing) and no validator was configured."
+        echo "Run 'npm install' in the local_ci directory to install vnu-jar, or configure one explicitly via the \$validator variable (e.g. validator=http://localhost:8888/)."
+        exit 1
     fi
 fi
 

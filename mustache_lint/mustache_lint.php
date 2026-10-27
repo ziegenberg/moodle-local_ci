@@ -307,44 +307,59 @@ function print_eslint_problems($problems, $ignoreparseerrors) {
 /**
  * Locate a Java 17+ runtime usable to run the vnu.jar validator.
  *
- * Order: JAVACMD env var (resolved by mustache_lint.sh), system java, then the
- * JRE auto-installed by the vnu-jar npm package during npm install
+ * Order: MUSTACHE_LINT_JAVACMD env var (resolved by mustache_lint.sh), system java,
+ * then the JRE auto-installed by the vnu-jar npm package during npm install
  * (node_modules/.cache/vnu-jar/java/).
  *
  * @param string $validator path to the validator jar.
  * @return string|false java executable path, or false when no usable runtime is found.
+ *   When false, $GLOBALS['VALIDATOR_JAVA_REASON'] describes what was found.
  */
 function resolve_validator_java($validator) {
-    // Honour a runtime already resolved by the caller (mustache_lint.sh).
-    $javacmd = getenv('JAVACMD');
+    // Honour a runtime already resolved by the caller (mustache_lint.sh). The name is
+    // namespaced to avoid colliding with JAVACMD set by Maven/Gradle/Ant/Tomcat. The
+    // shell only sets it after verifying the version, so a bare command name (e.g.
+    // "java") is trusted; an absolute path must still exist and be executable.
+    $javacmd = getenv('MUSTACHE_LINT_JAVACMD');
     if ($javacmd !== false && $javacmd !== '') {
-        return $javacmd;
+        if (strpos($javacmd, '/') === false && strpos($javacmd, '\\') === false) {
+            return $javacmd;
+        }
+        if (is_executable($javacmd)) {
+            return $javacmd;
+        }
     }
 
     // System java: needs to be 17 or above for vnu.jar 26.x.
+    $reason = 'no Java runtime was found';
     $javaoutput = @shell_exec('java -version 2>&1');
-    if ($javaoutput !== null && preg_match('/version "(\d+)(?:\.(\d+))?/', $javaoutput, $matches)) {
-        $major = (int)$matches[1];
-        if ($major == 1 && isset($matches[2])) {
+    if ($javaoutput !== null && preg_match('/version "(\d+(?:\.\d+)*)/', $javaoutput, $matches)) {
+        $versionparts = explode('.', $matches[1]);
+        $major = (int)$versionparts[0];
+        if ($major == 1 && isset($versionparts[1])) {
             // Java 8 and older report as "1.8".
-            $major = (int)$matches[2];
+            $major = (int)$versionparts[1];
         }
         if ($major >= 17) {
             return 'java';
         }
+        // A system java exists but is too old; remember it, but still try the
+        // JRE auto-installed by the vnu-jar npm package below.
+        $reason = 'found Java ' . $matches[1];
     }
 
     // JRE auto-installed by the vnu-jar npm package during postinstall.
     // The jar lives at <node_modules>/vnu-jar/build/dist/vnu.jar.
     $nodemodules = dirname(dirname(dirname(dirname($validator))));
     $cachedir = $nodemodules . '/.cache/vnu-jar/java';
-    foreach (['/jdk-*/bin/java', '/jdk-*/bin/java.exe', '/jdk-*/Contents/Home/bin/java'] as $glob) {
-        $candidates = glob($cachedir . $glob);
+    foreach (['/bin/java', '/bin/java.exe', '/Contents/Home/bin/java'] as $suffix) {
+        $candidates = glob($cachedir . '/*' . $suffix);
         if (!empty($candidates)) {
             return $candidates[0];
         }
     }
 
+    $GLOBALS['VALIDATOR_JAVA_REASON'] = $reason;
     return false;
 }
 
@@ -358,8 +373,9 @@ function validate_html($content) {
     if (strpos($VALIDATOR, 'http') !== 0) {
         $javacmd = resolve_validator_java($VALIDATOR);
         if ($javacmd === false) {
+            $reason = isset($GLOBALS['VALIDATOR_JAVA_REASON']) ? $GLOBALS['VALIDATOR_JAVA_REASON'] : 'no Java runtime was found';
             cli_error(
-                "The vnu.jar HTML validator requires Java 17 or above, but no Java runtime was found.\n" .
+                "The vnu.jar HTML validator requires Java 17 or above, but $reason.\n" .
                 "Please install Java 17 or above (e.g. apt install openjdk-17-jre or brew install openjdk@17), or use one of the alternatives:\n" .
                 "  - the self-contained vnu binary (https://validator.github.io/validator/)\n" .
                 "  - a validator service URL, e.g. --validator=https://html5.validator.nu/ or http://localhost:8888/");

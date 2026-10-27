@@ -10,5 +10,10 @@ Requirements:
   the PATH, the vnu-jar npm package downloads a JRE automatically during
   npm install (node_modules/.cache/vnu-jar/java/). Failing that, the check
   exits with an error suggesting how to install Java, or how to point the
-  check at a validator service instead (e.g. a local Docker container or
-  the public https://html5.validator.nu) via the $validator variable.
+  check at a validator service instead (e.g. a local Docker container) via
+  the $validator variable.
+
+- The public https://html5.validator.nu is no longer a silent fallback. It is
+  used only when explicitly configured via $validator. If the NPM-installed
+  vnu.jar is missing and no validator is configured, the check exits with
+  guidance rather than posting every template to the public service.
